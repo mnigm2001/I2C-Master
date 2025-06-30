@@ -1,0 +1,26 @@
+# Vivado project junk
+*.jou
+*.log
+*.str
+*.bin
+*.xml
+*.pb
+*.wdb
+*.bak
+*.xpr
+*.xpr.user
+*.cache/
+*.runs/
+*.sim/
+*.ip_user_files/
+*.hw/
+*.Xil/
+*.webtalk/
+
+# Any Vivado-generated folders
+Basys3_BlinkLED.cache/
+Basys3_BlinkLED.hw/
+Basys3_BlinkLED.ip_user_files/
+Basys3_BlinkLED.runs/
+Basys3_BlinkLED.sim/
+Basys3_BlinkLED.srcs/
