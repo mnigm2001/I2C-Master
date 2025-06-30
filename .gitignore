@@ -16,6 +16,8 @@
 *.hw/
 *.Xil/
 *.webtalk/
+scripts/Copy-Files.ps1
+
 
 # Any Vivado-generated folders
 Basys3_BlinkLED.cache/
