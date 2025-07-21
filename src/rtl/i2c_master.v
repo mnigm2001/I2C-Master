@@ -31,7 +31,7 @@ module i2c_master(
     inout wire sda
     );
     
-    parameter SLAVE_ADDR = 7'b1111111;
+    parameter SLAVE_ADDR = 7'b1001101;
     parameter CLK_DIV = 250;
     
     // TOP FSM States
@@ -87,7 +87,7 @@ module i2c_master(
                 end
                 STATE_START:    state <= STATE_ADDR;
                 STATE_ADDR: begin
-                    if (addr_sent == 1'b1) state <= STATE_IDLE; //temp go back to IDLE for now
+                    if (rw_sent == 1'b1) state <= STATE_IDLE; //temp go back to IDLE for now
                 end
             endcase
         end
@@ -117,12 +117,13 @@ module i2c_master(
             
             scl_oe <= 1'b0;
             addr_sent <= 1'b0;
+            rw_sent <= 1'b0;
+            
             prev_scl <= 1'b1; //necessary?
         end else begin
             case (state)
                 STATE_IDLE: begin
-//                    sda_out <= 1'b1;
-                    sda_oe <= 1'b1; // temp change to 1'b1
+                    sda_oe <= 1'b0;
                     scl_oe <= 1'b0;
                     addr_sent <= 1'b0;
                 end
@@ -130,39 +131,74 @@ module i2c_master(
                     sda_oe <= 1'b1;     // start signal
                     scl_oe <= 1'b1;
                     // 0101101 -> 10101101
-                    addr_sr <= {1'b1, SLAVE_ADDR};
+                    addr_sr <= {SLAVE_ADDR, 1'b1};
                 end
                 STATE_ADDR: begin
-//                      sda_oe <= 1'b0;
-//                    scl_oe <= 1'b1;
-
+                    
+                    /*
+                        Master sends prepares data on falling edge of scl
+                        Slave reads data on rising edge
+                         --> SCL enable should remain ON for 8 RISING EDGES of SCL
+                         --> DATA should be prepared on the falling edges
+                         Rising edge: scl_inter == 1'b0 && scl_prev == 1'b1
+                         Falling edge: scl_inter == 1'b1 && scl_prev == 1'b0
+                         
+                         if Falling Edge
+                            if addr_read_cnt <= 7
+                                if addr_bit == 1
+                                    sda_oe = 0
+                                else (addr_bit == 0)
+                                    sda_oe = 1
+                                addr_sr = addr_sr << 1
+                         if Rising Edge
+                            if addr_read_cnt <= 7
+                                addr_read_cnt++
+                                
+                    
+                    */
+                    
+                    
                     // SEND on SCL falling edge
                     if (scl_inter == 1'b0 && prev_scl == 1'b1) begin
-                        if (addr_read_cnt < 3'd7) begin   // Send address bits 
-                            addr_read_cnt <= addr_read_cnt + 1;
+                        if ((addr_read_cnt <= 3'd7) && (addr_sent == 1'b0)) begin   // Send address bits 
+                            
 //                            scl_oe <= 1'b1;
+
                             sda_addr_first_shift <= (SLAVE_ADDR << 1);
                             sda_addr_second_shift <= ((SLAVE_ADDR << 1) >> addr_read_cnt );
                             sda_addr_final <= (((SLAVE_ADDR << 1) >> addr_read_cnt ) & 1'b1);
-                            addr_sr_out <= addr_sr >> addr_read_cnt & 1'b1;
-                            if (((SLAVE_ADDR << 1) >> addr_read_cnt ) & 1'b1) begin
+                            addr_sr_out <= addr_sr[7];
+                            addr_sr <= {addr_sr[6:0], 1'b0};
+                            
+                            if (((SLAVE_ADDR << 1) >> (7 - addr_read_cnt)) & 1'b1) begin
                                 sda_oe <= 1'b0; // if address bit 1 -> sda_oe = 1'b0 -> sda = 1'bz
                                 sda_oe_flag <= 1'b0;
                             end else begin
                                 sda_oe <= 1'b1;
                                 sda_oe_flag <= 1'b1;
                             end
-                        end else begin  // Send R/W bit
+                                
+                            // Address sent
+                            if (addr_read_cnt == 3'd7) begin addr_sent <= 1'b1; end
+                            addr_read_cnt <= addr_read_cnt + 1;
                             
+                        end else if (addr_sent == 1'b1) begin  // Send R/W bit -- W=0?
+                            sda_oe <= 1'b1;
+                            scl_oe <= 1'b1;
+                            sda_oe_flag <= 1'b1;
+                            rw_sent <= 1'b1;
+                            
+                        end else begin // Reset regs
+                            addr_sent <= 1'b0;
+                            rw_sent <= 1'b0;
                             addr_read_cnt <= 3'd0;
                             sda_oe <= 1'b0;
-    //                        sda_out <= 1'b1;
                             scl_oe <= 1'b0;
-                            addr_sent <= 1'b1;      // For state change
                         end
                     end 
                     
                     if (prev_scl != scl_inter) prev_scl <= scl_inter;
+                    
 
                 end
             endcase
