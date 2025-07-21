@@ -99,6 +99,7 @@ input wire clk,
         resetn = 1'b0;
         repeat (3) @(posedge clk);
         resetn = 1'b1;
+        #500;
         
         // Start
         @(posedge clk);

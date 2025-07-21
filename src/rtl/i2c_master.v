@@ -27,11 +27,11 @@ module i2c_master(
     output reg busy,
     output reg [15:0] data_out,
     output reg data_valid,
-    output reg scl,
+    output wire scl,
     inout wire sda
     );
     
-    parameter SLAVE_ADDR = 7'b1001000;
+    parameter SLAVE_ADDR = 7'b1111111;
     parameter CLK_DIV = 250;
     
     // TOP FSM States
@@ -53,29 +53,26 @@ module i2c_master(
     reg addr_sent;
     
     // SCL Enable
-    reg scl_toggle_en;
+    reg scl_oe;
 
-    
-    /*
-    I need to generate SCL only when needed
-    scynronize to SCL not to clk_100k
-    
-    
-    */
+
     
     // ------------------------------------------ //
     // --------------- SCL Driver --------------- //
     // ------------------------------------------ //
-    wire clk_100k;
+    wire scl_inter;
     clk_divider #(.CLK_DIV(CLK_DIV)) clk_div (
         .clk_in(clk),
         .resetn(resetn),
-        .clk_out(clk_100k)
+        .clk_out(scl_inter)
     );
-    always @(posedge clk or negedge resetn) begin
-        if (!resetn) scl = 1'b1;
-        else scl = (scl_toggle_en == 1'b1) ? clk_100k : 1'b1;
-    end
+//    always @(posedge clk or negedge resetn) begin
+//        if (!resetn) scl = 1'b1;
+//        else scl = (scl_oe == 1'b1) ? scl_inter : 1'b1;
+//    end
+    assign scl = (scl_oe == 1'b1) ? scl_inter : 1'bz;
+
+    
     // ------------------------------------------ //
     // -------------- State Update -------------- //
     // ------------------------------------------ //
@@ -95,6 +92,83 @@ module i2c_master(
             endcase
         end
     end
+    
+    
+    // ------------------------------------------ //
+    // --------------- SDA Driver --------------- //
+    // ------------------------------------------ //
+    reg prev_scl;
+    
+    reg sda_oe_flag;
+    reg [7:0] sda_addr_first_shift;
+    reg [7:0] sda_addr_second_shift;
+    reg sda_addr_final;
+    
+    reg [7:0] addr_sr;
+    reg addr_sr_out;
+    
+    reg rw_sent;
+    
+    always @ (posedge clk or negedge resetn) begin
+        if (!resetn) begin
+//            sda_out <= 1'b1;
+            sda_oe <= 1'b0;
+            addr_read_cnt <= 3'd0;
+            
+            scl_oe <= 1'b0;
+            addr_sent <= 1'b0;
+            prev_scl <= 1'b1; //necessary?
+        end else begin
+            case (state)
+                STATE_IDLE: begin
+//                    sda_out <= 1'b1;
+                    sda_oe <= 1'b1; // temp change to 1'b1
+                    scl_oe <= 1'b0;
+                    addr_sent <= 1'b0;
+                end
+                STATE_START: begin
+                    sda_oe <= 1'b1;     // start signal
+                    scl_oe <= 1'b1;
+                    // 0101101 -> 10101101
+                    addr_sr <= {1'b1, SLAVE_ADDR};
+                end
+                STATE_ADDR: begin
+//                      sda_oe <= 1'b0;
+//                    scl_oe <= 1'b1;
+
+                    // SEND on SCL falling edge
+                    if (scl_inter == 1'b0 && prev_scl == 1'b1) begin
+                        if (addr_read_cnt < 3'd7) begin   // Send address bits 
+                            addr_read_cnt <= addr_read_cnt + 1;
+//                            scl_oe <= 1'b1;
+                            sda_addr_first_shift <= (SLAVE_ADDR << 1);
+                            sda_addr_second_shift <= ((SLAVE_ADDR << 1) >> addr_read_cnt );
+                            sda_addr_final <= (((SLAVE_ADDR << 1) >> addr_read_cnt ) & 1'b1);
+                            addr_sr_out <= addr_sr >> addr_read_cnt & 1'b1;
+                            if (((SLAVE_ADDR << 1) >> addr_read_cnt ) & 1'b1) begin
+                                sda_oe <= 1'b0; // if address bit 1 -> sda_oe = 1'b0 -> sda = 1'bz
+                                sda_oe_flag <= 1'b0;
+                            end else begin
+                                sda_oe <= 1'b1;
+                                sda_oe_flag <= 1'b1;
+                            end
+                        end else begin  // Send R/W bit
+                            
+                            addr_read_cnt <= 3'd0;
+                            sda_oe <= 1'b0;
+    //                        sda_out <= 1'b1;
+                            scl_oe <= 1'b0;
+                            addr_sent <= 1'b1;      // For state change
+                        end
+                    end 
+                    
+                    if (prev_scl != scl_inter) prev_scl <= scl_inter;
+
+                end
+            endcase
+        end
+    end
+    assign sda = (sda_oe == 1'b1) ? 1'b0 : 1'b1;
     
     
      // ------------------------------------------- //
@@ -119,64 +193,5 @@ module i2c_master(
             endcase
         end
     end
-    
-    // ------------------------------------------ //
-    // --------------- SDA Driver --------------- //
-    // ------------------------------------------ //
-    always @ (posedge clk_100k or negedge resetn) begin
-        if (!resetn) begin
-            sda_out <= 1'b1;
-            sda_oe <= 1'b0;
-            addr_read_cnt <= 3'd0;
-            
-            scl_toggle_en <= 1'b0;
-            addr_sent <= 1'b0;
-        end else begin
-            case (state)
-                STATE_IDLE: begin
-                    sda_out <= 1'b1;
-                    sda_oe <= 1'b0;
-                    scl_toggle_en <= 1'b0;
-                    addr_sent <= 1'b0;
-                end
-                STATE_START: begin
-                    sda_out <= 1'b0;    // start signal
-                    sda_oe <= 1'b1;
-                end
-                STATE_ADDR: begin
-                    scl_toggle_en <= 1'b1;
-                    // -- Send 7-bit address -- //
-                    if (addr_read_cnt < 3'd7) begin
-                        addr_read_cnt <= addr_read_cnt + 1;
-                        sda_oe <= 1'b1;
-                        sda_out <=  ((SLAVE_ADDR << 1) >> addr_read_cnt ) & 1'b1; // shift out 1 bit from slave address
-                    end else begin
-                        addr_read_cnt <= 3'd0;
-                        sda_oe <= 1'b0;
-                        sda_out <= 1'b1;
-                        scl_toggle_en <= 1'b0;
-                        addr_sent <= 1'b1;
-                    end
-                end
-            endcase
-        end
-    end
-    assign sda = (sda_oe == 1'b1) ? sda_out : 1'bz;
-
-    // ------------------------------------------ //
-    // --------------- SCL Driver --------------- //
-    // ------------------------------------------ //
-//    always @ (posedge clk_100k or negedge resetn) begin
-//        if (!resetn) begin
-//            scl <= 1'b1;
-//        end else begin
-//            scl <= 1'b1;
-//            if (scl_toggle_en == 1'b1) begin
-//                scl = ~scl;
-//            end
-//        end
-//    end
-    
-    
     
 endmodule
