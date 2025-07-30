@@ -31,7 +31,7 @@ module i2c_master(
     inout wire sda
     );
     
-    parameter SLAVE_ADDR = 7'b1001101;
+    parameter SLAVE_ADDR = 7'b0101101;
     parameter CLK_DIV = 250;
     
     // TOP FSM States
@@ -76,6 +76,7 @@ module i2c_master(
     // ------------------------------------------ //
     // -------------- State Update -------------- //
     // ------------------------------------------ //
+        reg rw_sent;
     always @ (posedge clk or negedge resetn) begin
         if (!resetn) begin
             state <= STATE_IDLE;
@@ -87,8 +88,11 @@ module i2c_master(
                 end
                 STATE_START:    state <= STATE_ADDR;
                 STATE_ADDR: begin
-                    if (rw_sent == 1'b1) state <= STATE_IDLE; //temp go back to IDLE for now
+                    if (rw_sent == 1'b1) state <= STATE_ADDR_ACK;
+                    
                 end
+                STATE_ADDR_ACK: state <= STATE_READ_BYTE;
+                STATE_READ_BYTE: state <= STATE_IDLE; // go to idle temporarily
             endcase
         end
     end
@@ -98,16 +102,7 @@ module i2c_master(
     // --------------- SDA Driver --------------- //
     // ------------------------------------------ //
     reg prev_scl;
-    
-    reg sda_oe_flag;
-    reg [7:0] sda_addr_first_shift;
-    reg [7:0] sda_addr_second_shift;
-    reg sda_addr_final;
-    
     reg [7:0] addr_sr;
-    reg addr_sr_out;
-    
-    reg rw_sent;
     
     always @ (posedge clk or negedge resetn) begin
         if (!resetn) begin
@@ -131,7 +126,7 @@ module i2c_master(
                     sda_oe <= 1'b1;     // start signal
                     scl_oe <= 1'b1;
                     // 0101101 -> 10101101
-                    addr_sr <= {SLAVE_ADDR, 1'b1};
+                    addr_sr <= {SLAVE_ADDR, 1'b0};
                 end
                 STATE_ADDR: begin
                     
@@ -153,39 +148,23 @@ module i2c_master(
                          if Rising Edge
                             if addr_read_cnt <= 7
                                 addr_read_cnt++
-                                
-                    
                     */
-                    
                     
                     // SEND on SCL falling edge
                     if (scl_inter == 1'b0 && prev_scl == 1'b1) begin
                         if ((addr_read_cnt <= 3'd7) && (addr_sent == 1'b0)) begin   // Send address bits 
-                            
-//                            scl_oe <= 1'b1;
-
-                            sda_addr_first_shift <= (SLAVE_ADDR << 1);
-                            sda_addr_second_shift <= ((SLAVE_ADDR << 1) >> addr_read_cnt );
-                            sda_addr_final <= (((SLAVE_ADDR << 1) >> addr_read_cnt ) & 1'b1);
-                            addr_sr_out <= addr_sr[7];
+ 
+                            if (addr_sr[7] == 1'b1) sda_oe <= 1'b0;
+                            else sda_oe <= 1'b1;
                             addr_sr <= {addr_sr[6:0], 1'b0};
-                            
-                            if (((SLAVE_ADDR << 1) >> (7 - addr_read_cnt)) & 1'b1) begin
-                                sda_oe <= 1'b0; // if address bit 1 -> sda_oe = 1'b0 -> sda = 1'bz
-                                sda_oe_flag <= 1'b0;
-                            end else begin
-                                sda_oe <= 1'b1;
-                                sda_oe_flag <= 1'b1;
-                            end
                                 
                             // Address sent
                             if (addr_read_cnt == 3'd7) begin addr_sent <= 1'b1; end
                             addr_read_cnt <= addr_read_cnt + 1;
                             
-                        end else if (addr_sent == 1'b1) begin  // Send R/W bit -- W=0?
-                            sda_oe <= 1'b1;
+                        end else if (addr_sent == 1'b1) begin  // scl on for one more cycle
+//                            sda_oe <= 1'b0;
                             scl_oe <= 1'b1;
-                            sda_oe_flag <= 1'b1;
                             rw_sent <= 1'b1;
                             
                         end else begin // Reset regs
@@ -193,18 +172,20 @@ module i2c_master(
                             rw_sent <= 1'b0;
                             addr_read_cnt <= 3'd0;
                             sda_oe <= 1'b0;
-                            scl_oe <= 1'b0;
+                            scl_oe <= 1'b1; // scl should remain ON for slave to ACK in next state
                         end
                     end 
                     
                     if (prev_scl != scl_inter) prev_scl <= scl_inter;
-                    
-
+                end
+                STATE_ADDR_ACK: begin
+                    // slave must ACK by pulling SDA low
+//                    if (sda ==
                 end
             endcase
         end
     end
-    assign sda = (sda_oe == 1'b1) ? 1'b0 : 1'b1;
+    assign sda = (sda_oe == 1'b1) ? 1'b0 : 1'bz;
     
     
      // ------------------------------------------- //

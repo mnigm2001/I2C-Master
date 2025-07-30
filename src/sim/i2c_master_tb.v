@@ -46,7 +46,7 @@ input wire clk,
 */
 
     
-    localparam SLAVE_ADDR = 7'b1001000;
+    localparam SLAVE_ADDR = 7'b0101101;
     
     /* Master Ports */
     logic clk=0;
@@ -58,6 +58,8 @@ input wire clk,
     logic data_valid;
     wire sda;  // inout
     logic scl;
+    pullup(sda);
+    pullup(scl);
     
     i2c_master DUT (
         .clk(clk),
@@ -90,7 +92,47 @@ input wire clk,
     
     */
     
+    
+    logic [6:0] slave_addr_buf;
+    logic rw_bit;
+    logic addr_ack;
+    
+    task addr_ack_tk (input logic sda, input logic scl, output logic addr_ack);
+        $display("... Entered Task ...");
+        slave_addr_buf = 7'b0;
+        
+        for (int i=0; i<7; i++) begin
+            $display("%t | scl = %0b sda = %0b", $time, scl, sda);
+            @(posedge scl);
+            slave_addr_buf = {slave_addr_buf[5:0], sda};
+            $display("sda = %0b | slave_addr_buf = %0b", sda, slave_addr_buf);
+        end
+        if (SLAVE_ADDR == slave_addr_buf) begin
+            $display("... Address Matched ...");
+            @(posedge scl);
+            sda = 1'b0;
+        end
+    endtask 
+    /*
+        task: addr_ack
+            After start is asserted
+            For 7 scl edges: store 1 addr bit in buffer -- MSB first -> shift left
+            For 8th edge: store rw_bit
+            If address matches the device -> pull sda low
+
+        
+        Assertions:
+            1. After RW bit, SDA should be tristated
+            2/ After RW bit, SCL should remain
+            
+        TO ASK: how to synchronize address between RTL and TB
+        
+        
+    */
+        
     initial begin
+    
+        
     
         start = 1'b0;
     
@@ -108,7 +150,9 @@ input wire clk,
         // Addr
         @(posedge clk);
         start = 1'b0;
-        repeat (10) @(posedge clk_sl);
+//        repeat (10) @(posedge clk_sl);
+        
+        addr_ack_tk(sda, scl, addr_ack);
 
         
         
